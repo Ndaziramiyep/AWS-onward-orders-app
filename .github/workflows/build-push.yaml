@@ -1,60 +1,85 @@
-name: build-and-push                                       # Workflow name shown in GitHub
+# Test -> build and push the image to ECR -> wait until AWS has released it.
+# Pull requests only run the tests. A push to main ships: pushing the ":latest" tag starts
+# EventBridge -> CodePipeline -> CodeDeploy blue/green, and the "release" job stays running
+# until that finishes, so a green check means every user is on the new version.
+name: build-and-push
 
-on:                                                       # When it runs
-  push:                                                   # On push
-    branches: [main]                                      # Only merges to main ship
-  pull_request:                                           # PRs run tests only (no push, no AWS)
-  workflow_dispatch:                                      # Manual/scripted run on main (first image bootstrap)
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch: # Manual run on main, e.g. the first image of a rebuild
 
-permissions:                                              # Token permissions
-  id-token: write                                         # Required to request the OIDC token
-  contents: read                                          # Read the repo
+# OIDC: GitHub issues a short-lived token that AWS exchanges for temporary credentials.
+# No AWS keys are stored anywhere in this repository or in GitHub secrets.
+permissions:
+  id-token: write
+  contents: read
 
-concurrency:                                              # One release build at a time
-  group: build-push-${{ github.ref }}                     # Per branch
-  cancel-in-progress: false                               # Never cancel a release mid-push
+# One release at a time; never cancel a release half way through.
+concurrency:
+  group: build-push-${{ github.ref }}
+  cancel-in-progress: false
 
-env:                                                      # Shared values (not secrets)
-  AWS_REGION: eu-west-1                                   # Target region
-  ROLE_ARN: arn:aws:iam::648637468459:role/onward-orders-lab-github-actions-role  # Role from the foundation stack
-  ECR_REPOSITORY: onward-orders-lab                       # Repository name
+env:
+  AWS_REGION: eu-west-1
+  ROLE_ARN: arn:aws:iam::648637468459:role/onward-orders-lab-github-actions-role # Output of the 01-foundation stack; not a secret
+  ECR_REPOSITORY: onward-orders-lab
+  PIPELINE_NAME: onward-orders-lab-pipeline
 
-jobs:                                                     # Jobs
-  test:                                                   # Unit tests gate every build
-    runs-on: ubuntu-latest                                # GitHub-hosted runner
-    steps:                                                # Steps
-      - uses: actions/checkout@v4                         # Get the code
-      - uses: actions/setup-python@v5                     # Install Python
-        with:                                             # Options
-          python-version: "3.12"                          # Same version as the image
-      - run: pip install -r app/requirements.txt pytest   # Install deps + pytest
-      - run: pytest -q                                    # Run tests
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12" # Same version as the image
+      - run: pip install -r app/requirements.txt pytest
+      - run: pytest -q
 
-  build-push:                                             # Build and push the image
-    needs: test                                           # Only if tests pass
-    if: github.event_name != 'pull_request'               # Never from pull requests (OIDC trust is main-only anyway)
-    runs-on: ubuntu-latest                                # GitHub-hosted runner
-    steps:                                                # Steps
-      - uses: actions/checkout@v4                         # Get the code
+  build-push:
+    needs: test
+    if: github.event_name != 'pull_request' # The AWS role only trusts the main branch anyway
+    runs-on: ubuntu-latest
+    outputs:
+      image_digest: ${{ steps.push.outputs.image_digest }}
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials (OIDC, no stored keys)  # Temporary STS credentials
-        uses: aws-actions/configure-aws-credentials@v4    # Official AWS action
-        with:                                             # Options
-          role-to-assume: ${{ env.ROLE_ARN }}             # Role trusted for this repo + main only
-          aws-region: ${{ env.AWS_REGION }}               # Region
-          role-session-name: gha-${{ github.run_id }}     # Traceable session name in CloudTrail
+      - name: Configure AWS credentials (OIDC, no stored keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-${{ github.run_id }}
 
-      - name: Log in to Amazon ECR                        # docker login with a short-lived token
-        id: ecr                                           # Step ID for outputs
-        uses: aws-actions/amazon-ecr-login@v2             # Official AWS action
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build, tag and push                         # Build once, push two tags
-        env:                                              # Step variables
-          REGISTRY: ${{ steps.ecr.outputs.registry }}     # <account>.dkr.ecr.<region>.amazonaws.com
-        run: |
-          SHA="${GITHUB_SHA::7}"                          # Short commit SHA = version
-          IMAGE="$REGISTRY/$ECR_REPOSITORY"               # Full repository URI
-          docker build --build-arg APP_VERSION="$SHA" -t "$IMAGE:$SHA" -t "$IMAGE:latest" .  # Build with both tags
-          docker push "$IMAGE:$SHA"                       # Immutable tag first (audit trail, rollback target)
-          docker push "$IMAGE:latest"                     # Moving tag last - this push triggers the release
-          echo "### Pushed \`$IMAGE:$SHA\`" >> "$GITHUB_STEP_SUMMARY"  # Show in the run summary
+      - name: Build, tag and push
+        id: push
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: ./scripts/build-push.sh
+
+  release:
+    needs: build-push
+    runs-on: ubuntu-latest
+    timeout-minutes: 55 # Canary + bake + rollback window, inside the 1-hour role session
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC, no stored keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-release-${{ github.run_id }}
+
+      - name: Wait for CodePipeline and CodeDeploy
+        env:
+          IMAGE_DIGEST: ${{ needs.build-push.outputs.image_digest }}
+        run: ./scripts/wait-for-release.sh
