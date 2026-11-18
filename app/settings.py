@@ -1,10 +1,13 @@
 """Release settings for the Onward Orders app. Change a value, push to main, and it ships."""
 
-STUDENT_NAME = "Patrick Ndaziramiye"                       # Full name shown on the page (lab requirement)
-LAB_NAME = "Delivering Order System Updates Safely"        # Lab name shown on the page (lab requirement)
-RELEASE_NOTE = "Initial release"                           # Free text; edit it to demo a visible new version
+# Shown on the home page (lab requirement: full name and lab name).
+STUDENT_NAME = "Patrick Ndaziramiye"
+LAB_NAME = "Delivering Order System Updates Safely"
 
-# Demo switch for the "bad release" check: set True, push, and /health returns 500.
-# The new (green) tasks never become healthy, the unhealthy-host alarm fires, and CodeDeploy
-# rolls back automatically while the old (blue) tasks keep serving customers.
-FORCE_UNHEALTHY = False                                    # Keep False for normal releases
+# Free text shown on the page; edit it to demo a visible new release.
+RELEASE_NOTE = "Initial release"
+
+# Bad-release demo: set True and push, and /health returns 500. The new (green) tasks never
+# become healthy, the unhealthy-host alarm fires, and CodeDeploy rolls back automatically while
+# the old (blue) tasks keep serving customers. Keep False for normal releases.
+FORCE_UNHEALTHY = False
