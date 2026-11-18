@@ -1,101 +1,114 @@
 """Onward Logistics order system: one container serving the UI and the order logic."""
 
-import json                                                # Parse the ECS metadata response
-import os                                                  # Read environment variables
-import socket                                              # Get the container hostname
-import time                                                # Timing for the CPU burner
-import urllib.request                                      # Call the local ECS metadata endpoint
-from datetime import datetime, timezone                    # Timestamps for orders
-from itertools import count                                # Simple order ID sequence
+import json
+import os
+import socket
+import time
+import urllib.request
+from datetime import datetime, timezone
+from itertools import count
 
-from flask import Flask, jsonify, render_template, request  # Web framework pieces
+from flask import Flask, jsonify, render_template, request
 
-import settings                                            # Release settings (name, lab, demo switch)
+import settings
 
-app = Flask(__name__)                                      # Create the web application
+app = Flask(__name__)
 
-APP_VERSION = os.getenv("APP_VERSION", "dev")              # Git SHA baked in at build time
-_order_ids = count(1001)                                   # Order numbers start at 1001
-ORDERS = []                                                # In-memory demo orders (per task)
+# Git SHA baked into the image at build time, so every page shows which release served it.
+APP_VERSION = os.getenv("APP_VERSION", "dev")
+
+# Demo orders live in memory, per task. Order numbers start at 1001.
+_order_ids = count(1001)
+ORDERS = []
 
 
 def task_location():
-    """Return (task id, availability zone) from ECS metadata, or local values off ECS."""
-    uri = os.getenv("ECS_CONTAINER_METADATA_URI_V4")       # Set by Fargate inside every task
-    if not uri:                                            # Running locally (docker run)
-        return socket.gethostname(), "local"               # Hostname and a placeholder AZ
-    try:                                                   # Metadata is link-local, no internet needed
-        with urllib.request.urlopen(f"{uri}/task", timeout=1) as resp:  # Ask ECS about this task
-            meta = json.load(resp)                         # Parse JSON
-        task_id = meta.get("TaskARN", "").rsplit("/", 1)[-1][:12]  # Short task ID
-        return task_id, meta.get("AvailabilityZone", "unknown")    # ID and AZ
-    except Exception:                                      # Never let metadata break the page
-        return socket.gethostname(), "unknown"             # Fallback values
+    """Return (task id, availability zone) from ECS task metadata, or local values off ECS."""
+    uri = os.getenv("ECS_CONTAINER_METADATA_URI_V4")  # Set by Fargate inside every task
+    if not uri:
+        return socket.gethostname(), "local"
+    try:
+        # The metadata endpoint is link-local, so it works without any internet path.
+        with urllib.request.urlopen(f"{uri}/task", timeout=1) as resp:
+            meta = json.load(resp)
+        task_id = meta.get("TaskARN", "").rsplit("/", 1)[-1][:12]
+        return task_id, meta.get("AvailabilityZone", "unknown")
+    except Exception:
+        # Never let a metadata problem break the page.
+        return socket.gethostname(), "unknown"
 
 
-TASK_ID, AZ = task_location()                              # Looked up once at start-up
+TASK_ID, AZ = task_location()
 
 
 @app.get("/")
 def index():
-    """Home page: student name, lab name, version and which task/AZ answered."""
-    return render_template(                                # Render templates/index.html
-        "index.html",                                      # Template file
-        student=settings.STUDENT_NAME,                     # Full name
-        lab=settings.LAB_NAME,                             # Lab name
-        version=APP_VERSION,                               # Release version (git SHA)
-        note=settings.RELEASE_NOTE,                        # Release note
-        task_id=TASK_ID,                                   # Task that served the request
-        az=AZ,                                             # AZ of that task
-        orders=list(reversed(ORDERS[-10:])),               # Latest 10 orders, newest first
+    """Home page: full name, lab name, release version and the task/AZ that answered."""
+    return render_template(
+        "index.html",
+        student=settings.STUDENT_NAME,
+        lab=settings.LAB_NAME,
+        version=APP_VERSION,
+        note=settings.RELEASE_NOTE,
+        task_id=TASK_ID,
+        az=AZ,
+        orders=list(reversed(ORDERS[-10:])),
     )
 
 
 @app.post("/orders")
 def create_order():
-    """Create a demo order from a form post or JSON body."""
-    data = request.get_json(silent=True) or request.form    # Accept JSON or HTML form
-    item = (data.get("item") or "").strip()[:60]           # Clean, length-limited item name
-    qty = int(data.get("quantity") or 1)                   # Quantity, default 1
-    if not item or not 1 <= qty <= 1000:                   # Basic validation
-        return jsonify(error="item required, quantity 1-1000"), 400  # Bad request
-    order = {                                              # Build the order record
-        "id": next(_order_ids),                            # Next order number
-        "item": item,                                      # What was ordered
-        "quantity": qty,                                   # How many
-        "created": datetime.now(timezone.utc).strftime("%H:%M:%S UTC"),  # When
-        "task": TASK_ID,                                   # Which task took it
+    """Create a demo order from an HTML form post or a JSON body."""
+    data = request.get_json(silent=True) or request.form
+    item = (data.get("item") or "").strip()[:60]
+    try:
+        qty = int(data.get("quantity") or 1)
+    except (TypeError, ValueError):
+        qty = 0  # Not a number: rejected below as a 400, never a 500 (5XX errors trigger a rollback)
+    if not item or not 1 <= qty <= 1000:
+        return jsonify(error="item required, quantity 1-1000"), 400
+
+    order = {
+        "id": next(_order_ids),
+        "item": item,
+        "quantity": qty,
+        "created": datetime.now(timezone.utc).strftime("%H:%M:%S UTC"),
+        "task": TASK_ID,
     }
-    ORDERS.append(order)                                   # Store in memory
-    if request.is_json:                                    # API caller
-        return jsonify(order), 201                         # Return JSON
-    return index()                                         # Browser: show the page again
+    ORDERS.append(order)
+    if request.is_json:
+        return jsonify(order), 201
+    return index()
 
 
 @app.get("/health")
 def health():
-    """ALB health check. Returns 500 only when the bad-release demo switch is on."""
-    if settings.FORCE_UNHEALTHY:                           # Deliberately broken release
-        return "unhealthy", 500                            # ALB marks the task unhealthy
-    return "ok", 200                                       # Healthy
+    """Health check for the ALB and the container. Returns 500 only for the bad-release demo."""
+    if settings.FORCE_UNHEALTHY:
+        return "unhealthy", 500
+    return "ok", 200
 
 
 @app.get("/version")
 def version():
     """Machine-readable version, used by the zero-downtime curl loop."""
-    return jsonify(version=APP_VERSION, task=TASK_ID, az=AZ)  # Version + location
+    return jsonify(version=APP_VERSION, task=TASK_ID, az=AZ)
 
 
 @app.get("/cpu")
 def burn_cpu():
-    """Burn CPU for N seconds (max 10) to demo auto scaling."""
-    seconds = min(float(request.args.get("seconds", 2)), 10.0)  # Cap the burn time
-    end = time.time() + seconds                            # Stop time
-    n = 0                                                  # Busy-work counter
-    while time.time() < end:                               # Spin until time is up
-        n += 1                                             # Pure CPU work
-    return jsonify(burned_seconds=seconds, iterations=n, task=TASK_ID)  # Report
+    """Burn CPU for N seconds (max 10) to demonstrate auto scaling."""
+    try:
+        seconds = min(float(request.args.get("seconds", 2)), 10.0)
+    except ValueError:
+        return jsonify(error="seconds must be a number"), 400
+    end = time.time() + seconds
+    n = 0
+    while time.time() < end:
+        n += 1
+    return jsonify(burned_seconds=seconds, iterations=n, task=TASK_ID)
 
 
-if __name__ == "__main__":                                 # Local run without gunicorn
-    app.run(host="0.0.0.0", port=8080)                     # Same port as the container
+if __name__ == "__main__":
+    # Local run without gunicorn, on the same port as the container.
+    app.run(host="0.0.0.0", port=8080)
