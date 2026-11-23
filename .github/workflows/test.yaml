@@ -1,0 +1,21 @@
+# Unit tests. Runs on every pull request, and is called by build-push.yaml before every build,
+# so nothing reaches ECR without passing them. Needs no AWS access.
+name: test
+
+on:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12" # Same version as the image
+      - run: pip install -r app/requirements.txt pytest
+      - run: pytest -q

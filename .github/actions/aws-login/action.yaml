@@ -1,0 +1,20 @@
+# AWS login for every workflow, through OIDC: GitHub issues a short-lived token that AWS exchanges
+# for temporary credentials. No AWS keys are stored in this repository or in GitHub secrets.
+# The calling job needs "permissions: id-token: write" and must run on main (the role trusts only main).
+# The other release settings (repository, pipeline, bundle bucket) are in scripts/config.sh.
+name: AWS login
+description: Assume the GitHub Actions role with OIDC.
+
+inputs:
+  session-name:
+    description: Role session name, shown in CloudTrail
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws:iam::648637468459:role/onward-orders-lab-github-actions-role # Output of the 01-foundation stack; not a secret
+        aws-region: eu-west-1 # Exported as AWS_REGION, which scripts/config.sh reads
+        role-session-name: ${{ inputs.session-name }}

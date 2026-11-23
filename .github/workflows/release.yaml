@@ -1,0 +1,39 @@
+# Waits until AWS has released one image: EventBridge -> CodePipeline -> CodeDeploy blue/green.
+# Called by build-push.yaml after every push, so a green check means every user is on the new
+# version. Can also be run by hand (Actions tab -> release -> Run workflow on main) with an image
+# digest, e.g. to keep watching a release after the build run timed out.
+name: release
+
+on:
+  workflow_call:
+    inputs:
+      image_digest:
+        description: Digest of the pushed image (sha256:...)
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      image_digest:
+        description: Digest of the pushed image (sha256:...)
+        required: true
+
+permissions:
+  id-token: write # OIDC login to AWS
+  contents: read
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main' # The AWS role only trusts the main branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 55 # Canary + bake + rollback window, inside the 1-hour role session
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/aws-login
+        with:
+          session-name: gha-release-${{ github.run_id }}
+
+      - name: Wait for CodePipeline and CodeDeploy
+        env:
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
+        run: ./scripts/wait-for-release.sh

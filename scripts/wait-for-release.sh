@@ -5,18 +5,19 @@
 # check means the change is live for every user.
 #
 # Usage: IMAGE_DIGEST=sha256:... ./scripts/wait-for-release.sh
+# IGNORE_EXECUTION_IDS (space separated) skips runs that already deployed this digest; rollback.sh
+# sets it, because an image it rolls back to was deployed before.
 
 # Stop on any error, unset variable or pipe failure.
 set -euo pipefail
 
-# Settings, overridable through the environment.
-REGION="${AWS_REGION:-eu-west-1}"
-PIPELINE="${PIPELINE_NAME:-onward-orders-lab-pipeline}"
+# Settings: shared ones from config.sh, overridable through the environment.
+source "$(dirname "$0")/config.sh"
 DIGEST="${IMAGE_DIGEST:?set IMAGE_DIGEST to the pushed image digest (sha256:...)}"
+IGNORE_EXECUTION_IDS="${IGNORE_EXECUTION_IDS:-}"
 FIND_MINUTES="${FIND_MINUTES:-10}"
 WAIT_MINUTES="${WAIT_MINUTES:-40}"
 CONSOLE="https://$REGION.console.aws.amazon.com/codesuite/codepipeline/pipelines/$PIPELINE/executions"
-export AWS_PAGER=""
 
 # Every AWS call has a hard time limit, so a stuck network call can never hang the job.
 aws_call() {
@@ -43,11 +44,16 @@ log "Looking for the $PIPELINE run that deploys $DIGEST ..."
 EXEC_ID=""
 deadline=$((SECONDS + FIND_MINUTES * 60))
 while (( SECONDS < deadline )); do
-  EXEC_ID="$(aws_call codepipeline list-pipeline-executions --pipeline-name "$PIPELINE" --max-items 20 --output text \
-    --query "pipelineExecutionSummaries[?sourceRevisions[?revisionId=='$DIGEST']].pipelineExecutionId | [0]" \
-    2>/dev/null | head -n1 || true)"
-  [[ -n "$EXEC_ID" && "$EXEC_ID" != None ]] && break
-  EXEC_ID=""
+  # Newest first; take the newest run for this digest that is not in IGNORE_EXECUTION_IDS.
+  RUNS="$(aws_call codepipeline list-pipeline-executions --pipeline-name "$PIPELINE" --max-items 20 --output text \
+    --query "pipelineExecutionSummaries[?sourceRevisions[?revisionId=='$DIGEST']].pipelineExecutionId" \
+    2>/dev/null || true)"
+  for run in $RUNS; do
+    [[ "$run" == None || " $IGNORE_EXECUTION_IDS " == *" $run "* ]] && continue
+    EXEC_ID="$run"
+    break
+  done
+  [[ -n "$EXEC_ID" ]] && break
   sleep 15
 done
 if [[ -z "$EXEC_ID" ]]; then

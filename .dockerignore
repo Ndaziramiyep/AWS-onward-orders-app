@@ -6,3 +6,5 @@ tests
 **/*.pyc
 .venv
 *.md
+deploy
+scripts

@@ -1,0 +1,48 @@
+# ECS task definition template, used by CodeDeploy for every blue/green release.
+# build-push.sh converts this file to taskdef.json in the deploy bundle, because the pipeline's
+# CodeDeployToECS action only reads JSON. Keep numbers that ECS expects as strings quoted.
+family: onward-orders-lab # Must match the CloudFormation bootstrap task definition
+networkMode: awsvpc
+requiresCompatibilities:
+  - FARGATE
+cpu: "256"
+memory: "512"
+runtimePlatform:
+  operatingSystemFamily: LINUX
+  cpuArchitecture: X86_64
+executionRoleArn: arn:aws:iam::648637468459:role/onward-orders-lab-task-exec-role # Created by the 04-ecs stack
+taskRoleArn: arn:aws:iam::648637468459:role/onward-orders-lab-task-role # Created by the 04-ecs stack
+containerDefinitions:
+  - name: app # Must match ContainerName in appspec.yaml
+    image: <IMAGE1_NAME> # Replaced with the new image URI by the pipeline
+    essential: true
+    portMappings:
+      - containerPort: 8080
+        protocol: tcp
+    healthCheck:
+      command:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).status == 200 else 1)"
+      interval: 30
+      timeout: 5
+      retries: 3
+      startPeriod: 15
+    logConfiguration:
+      logDriver: awslogs
+      options: # Log group from the 04-ecs stack
+        awslogs-group: /ecs/onward-orders-lab
+        awslogs-region: eu-west-1
+        awslogs-stream-prefix: app
+tags:
+  - key: Project
+    value: onward-orders
+  - key: Environment
+    value: lab
+  - key: Owner
+    value: patrick-ndaziramiye
+  - key: CostCenter
+    value: amalitech-training
+  - key: ManagedBy
+    value: codepipeline

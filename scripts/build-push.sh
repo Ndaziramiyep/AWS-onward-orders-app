@@ -8,9 +8,8 @@
 # Stop on any error, unset variable or pipe failure.
 set -euo pipefail
 
-# Settings, overridable through the environment.
-REGION="${AWS_REGION:-eu-west-1}"
-REPOSITORY="${ECR_REPOSITORY:-onward-orders-lab}"
+# Settings: shared ones from config.sh, overridable through the environment.
+source "$(dirname "$0")/config.sh"
 REGISTRY="${REGISTRY:?set REGISTRY to <account>.dkr.ecr.<region>.amazonaws.com}"
 COMMIT="${GITHUB_SHA:-$(git rev-parse HEAD)}"
 SHA="${COMMIT::7}"
@@ -19,8 +18,17 @@ IMAGE="$REGISTRY/$REPOSITORY"
 # Build once with both tags; the SHA is baked in as the app version.
 docker build --build-arg APP_VERSION="$SHA" -t "$IMAGE:$SHA" -t "$IMAGE:latest" .
 
-# Immutable tag first, moving tag last: the "latest" push is what triggers the release.
 docker push "$IMAGE:$SHA"
+
+# Deploy bundle: taskdef.json (converted from deploy/taskdef.yaml) + appspec.yaml, see make-bundle.sh.
+# Uploaded BEFORE the "latest" push, so the pipeline run that push starts reads this commit's specs.
+BUNDLE="$(mktemp -d)/bundle.zip"
+"$(dirname "$0")/make-bundle.sh" "$COMMIT" "$BUNDLE"
+aws s3 cp "$BUNDLE" "s3://$BUNDLE_BUCKET/$BUNDLE_KEY" --region "$REGION" \
+  --metadata "commit=$COMMIT" --only-show-errors
+echo "Uploaded deploy bundle to s3://$BUNDLE_BUCKET/$BUNDLE_KEY"
+
+# Moving tag last: the "latest" push is what triggers the release.
 docker push "$IMAGE:latest"
 
 # The digest identifies this exact image in the pipeline run that deploys it.
