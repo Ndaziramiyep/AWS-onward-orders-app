@@ -6,6 +6,6 @@ Resources:
       Properties:
         TaskDefinition: <TASK_DEFINITION> # The pipeline replaces this with the new task definition revision
         LoadBalancerInfo:
-          ContainerName: "app" # Must match the container name in taskdef.yaml
+          ContainerName: "app" # Must match the container name in the ECS task definition (family onward-orders-lab)
           ContainerPort: 8080
         PlatformVersion: "LATEST"

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Rolls the service back to an image that was already built, without rebuilding it.
-# 1. Uploads the deploy bundle (taskdef + appspec) from that image's commit to the bundle bucket.
+# 1. Uploads a deploy bundle to the bundle bucket: the latest task definition revision in ECS + that
+#    commit's appspec. Only the image is rolled back; task settings (CPU, health check...) are kept.
 # 2. Points the "latest" tag at the old image. That push starts the normal release:
 #    EventBridge -> CodePipeline -> CodeDeploy blue/green, with the same canary and alarm rollback.
 # 3. Waits for the release with wait-for-release.sh.

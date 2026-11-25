@@ -7,6 +7,7 @@ REPOSITORY="${ECR_REPOSITORY:-onward-orders-lab}"                               
 PIPELINE="${PIPELINE_NAME:-onward-orders-lab-pipeline}"                           # 06-delivery
 BUNDLE_BUCKET="${BUNDLE_BUCKET:-onward-orders-lab-bundle-648637468459-eu-west-1}" # BundleBucketName, 01-foundation
 BUNDLE_KEY="${BUNDLE_KEY:-deploy/bundle.zip}"                                     # BundleObjectKey, 01-foundation
+TASK_FAMILY="${TASK_FAMILY:-onward-orders-lab}"                                   # Task definition family, 04-ecs
 
 # Never open a pager for AWS CLI output.
 export AWS_PAGER=""

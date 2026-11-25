@@ -32,13 +32,23 @@ else
   docker push "$IMAGE:$SHA"
 fi
 
-# Deploy bundle: taskdef.json (converted from deploy/taskdef.yaml) + appspec.yaml, see make-bundle.sh.
-# Uploaded BEFORE the "latest" push, so the pipeline run that push starts reads this commit's specs.
+# Deploy bundle: taskdef.json (generated from the latest task definition revision in ECS)
+# + appspec.yaml, see make-bundle.sh. Uploaded BEFORE the "latest" push, so the pipeline run that
+# push starts reads this bundle.
 BUNDLE="$(mktemp -d)/bundle.zip"
-"$(dirname "$0")/make-bundle.sh" "$COMMIT" "$BUNDLE"
-aws s3 cp "$BUNDLE" "s3://$BUNDLE_BUCKET/$BUNDLE_KEY" --region "$REGION" \
-  --metadata "commit=$COMMIT" --only-show-errors
-echo "Uploaded deploy bundle to s3://$BUNDLE_BUCKET/$BUNDLE_KEY"
+status=0
+"$(dirname "$0")/make-bundle.sh" "$COMMIT" "$BUNDLE" || status=$?
+if (( status == 2 )); then
+  # First image of a rebuild: stack 04-ecs (and so the pipeline) does not exist yet. The service
+  # starts from the bootstrap task definition; re-run this workflow once 04-ecs exists.
+  echo "::warning::No task definition in ECS yet (stack 04-ecs missing); deploy bundle not uploaded."
+elif (( status != 0 )); then
+  exit "$status"
+else
+  aws s3 cp "$BUNDLE" "s3://$BUNDLE_BUCKET/$BUNDLE_KEY" --region "$REGION" \
+    --metadata "commit=$COMMIT" --only-show-errors
+  echo "Uploaded deploy bundle to s3://$BUNDLE_BUCKET/$BUNDLE_KEY"
+fi
 
 # The digest identifies this exact image in the pipeline run that deploys it.
 DIGEST="$(image_detail "$SHA" imageDigest)"

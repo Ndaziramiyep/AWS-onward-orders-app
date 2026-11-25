@@ -18,13 +18,12 @@ The infrastructure lives in **[AWS-onward-orders-app-infra](https://github.com/N
 | `.github/workflows/rollback.yml` | Manual run of `scripts/rollback.sh` from the Actions tab |
 | `scripts/config.sh` | Shared settings for the scripts (region, ECR repository, pipeline, bundle bucket and key) |
 | `scripts/build-push.sh` | Builds the image once and pushes `:<sha>` then `:latest` (the `:latest` push starts the AWS release) |
-| `scripts/make-bundle.sh` | Builds the deploy bundle for a commit: `taskdef.json` (converted from `deploy/taskdef.yaml`) and `appspec.yaml` |
+| `scripts/make-bundle.sh` | Builds the deploy bundle: `taskdef.json` (generated from the latest ECS task definition revision of the `onward-orders-lab` family) and the commit's `appspec.yaml` |
 | `scripts/wait-for-release.sh` | Finds the CodePipeline run for the pushed image digest and waits for it: green only when CodeDeploy has finished, red if it fails or rolls back |
-| `scripts/rollback.sh` | Points `:latest` back at an already-built `:<sha>` image with that commit's bundle, then waits for the release |
+| `scripts/rollback.sh` | Points `:latest` back at an already-built `:<sha>` image with a bundle holding that commit's AppSpec, then waits for the release |
 | `deploy/appspec.yaml` | CodeDeploy AppSpec. `<TASK_DEFINITION>` is filled in by the pipeline. |
-| `deploy/taskdef.yaml` | Task definition template. `<IMAGE1_NAME>` is replaced with the new image URI. Field notes are comments in the file. |
 
-The pipeline's CodeDeployToECS action only reads a JSON task definition, so `scripts/make-bundle.sh` converts `deploy/taskdef.yaml` to `taskdef.json` when it builds the deploy bundle. The bundle layout the pipeline sees is unchanged: `taskdef.json` and `appspec.yaml` at the zip root.
+This repo has **no task definition**. On every push to `main`, `scripts/make-bundle.sh` copies the latest active revision of the `onward-orders-lab` family from ECS (read-only fields removed, tags kept, image set to `<IMAGE1_NAME>`) and writes it as `taskdef.json` next to `appspec.yaml` at the zip root; the pipeline replaces `<IMAGE1_NAME>` with the new image URI and registers the next revision. To change CPU, memory, the health check or logs, register a new revision of the `onward-orders-lab` family (e.g. ECS console → Task definitions → Create new revision), then release (push or re-run `ci`).
 
 ## Run locally
 
