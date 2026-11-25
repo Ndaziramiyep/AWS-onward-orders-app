@@ -13,11 +13,9 @@ The infrastructure lives in **[AWS-onward-orders-app-infra](https://github.com/N
 | `app/templates/index.html` | Page showing full name, lab name, version, task ID, and AZ |
 | `tests/` | Unit tests that gate every build |
 | `Dockerfile` | Multi-stage, slim base image, non-root user, gunicorn |
-| `.github/workflows/test.yaml` | Unit tests on every pull request; also called before every build |
-| `.github/workflows/build-push.yaml` | On `main`: tests, then `scripts/build-push.sh`, then `release.yaml` |
-| `.github/workflows/release.yaml` | Waits for the AWS release with `scripts/wait-for-release.sh`; can also be run by hand with an image digest |
-| `.github/workflows/rollback.yaml` | Manual run of `scripts/rollback.sh` from the Actions tab |
-| `.github/actions/aws-login/` | Shared OIDC login step; holds the GitHub role ARN and region |
+| `.github/workflows/ci.yml` | Unit tests on every pull request; on `main`: tests, then `scripts/build-push.sh`, then `release.yml` |
+| `.github/workflows/release.yml` | Waits for the AWS release with `scripts/wait-for-release.sh`; can also be run by hand with an image digest |
+| `.github/workflows/rollback.yml` | Manual run of `scripts/rollback.sh` from the Actions tab |
 | `scripts/config.sh` | Shared settings for the scripts (region, ECR repository, pipeline, bundle bucket and key) |
 | `scripts/build-push.sh` | Builds the image once and pushes `:<sha>` then `:latest` (the `:latest` push starts the AWS release) |
 | `scripts/make-bundle.sh` | Builds the deploy bundle for a commit: `taskdef.json` (converted from `deploy/taskdef.yaml`) and `appspec.yaml` |
@@ -47,4 +45,4 @@ Tests: `pip install -r app/requirements.txt pytest && pytest -q`
 
 ## Security
 
-No AWS secrets are stored in this repository or its settings. The role ARN in `.github/actions/aws-login/action.yaml` is not a secret. The role trusts only this repo's `main` branch and can only push to the `onward-orders-lab` ECR repository.
+No AWS secrets are stored in this repository or its settings. The role ARN in the OIDC login step of each workflow in `.github/workflows/` is not a secret. The role trusts only this repo's `main` branch and can only push to the `onward-orders-lab` ECR repository.

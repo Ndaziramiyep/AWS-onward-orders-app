@@ -1,6 +1,6 @@
 # Shared settings for the release scripts; sourced, not run. Each one can be overridden through
 # the environment. The values are outputs of the infra stacks (AWS-onward-orders-app-infra).
-# The GitHub role ARN lives in .github/actions/aws-login/action.yaml.
+# The GitHub role ARN lives in the OIDC login step of each workflow in .github/workflows/.
 
 REGION="${AWS_REGION:-eu-west-1}"
 REPOSITORY="${ECR_REPOSITORY:-onward-orders-lab}"                                 # 01-foundation

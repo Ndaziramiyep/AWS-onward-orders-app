@@ -1,5 +1,5 @@
 # Waits until AWS has released one image: EventBridge -> CodePipeline -> CodeDeploy blue/green.
-# Called by build-push.yaml after every push, so a green check means every user is on the new
+# Called by ci.yml after every push, so a green check means every user is on the new
 # version. Can also be run by hand (Actions tab -> release -> Run workflow on main) with an image
 # digest, e.g. to keep watching a release after the build run timed out.
 name: release
@@ -29,9 +29,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: ./.github/actions/aws-login
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          session-name: gha-release-${{ github.run_id }}
+          role-to-assume: arn:aws:iam::648637468459:role/onward-orders-lab-github-actions-role # Output of the 01-foundation stack; not a secret
+          aws-region: eu-west-1
+          role-session-name: gha-release-${{ github.run_id }}
 
       - name: Wait for CodePipeline and CodeDeploy
         env:

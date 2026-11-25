@@ -1,6 +1,6 @@
 # Manual rollback to an image that was already built: Actions tab -> rollback -> Run workflow (on main).
 # Runs scripts/rollback.sh, which re-tags the old image as "latest" with that commit's deploy bundle,
-# then waits for the blue/green release like build-push does. Revert the bad commit on main as well,
+# then waits for the blue/green release like ci.yml does. Revert the bad commit on main as well,
 # or the next push ships it again.
 name: rollback
 
@@ -8,16 +8,16 @@ on:
   workflow_dispatch:
     inputs:
       commit:
-        description: Commit SHA to roll back to (must have been shipped by build-push)
+        description: Commit SHA to roll back to (must have been shipped by ci.yml)
         required: true
 
 permissions:
   id-token: write # OIDC login to AWS
   contents: read
 
-# Same group as build-push: a rollback never runs at the same time as a release.
+# Same group as ci.yml: a rollback never runs at the same time as a release.
 concurrency:
-  group: build-push-${{ github.ref }}
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -30,9 +30,12 @@ jobs:
         with:
           fetch-depth: 0 # The target commit's deploy files are read from git history
 
-      - uses: ./.github/actions/aws-login
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          session-name: gha-rollback-${{ github.run_id }}
+          role-to-assume: arn:aws:iam::648637468459:role/onward-orders-lab-github-actions-role # Output of the 01-foundation stack; not a secret
+          aws-region: eu-west-1 # Exported as AWS_REGION, which scripts/config.sh reads
+          role-session-name: gha-rollback-${{ github.run_id }}
 
       - name: Roll back and wait for CodePipeline and CodeDeploy
         env:
